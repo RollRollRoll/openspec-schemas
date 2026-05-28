@@ -57,20 +57,33 @@ brainstorm → proposal → (design) → specs → tasks → plan
 
 ## Decisions
 
-### D1: review_protocol 集中定義在 schema.yaml 頂層
+### D1: review 步驟「內聯」進每個 instruction;頂層 review_protocol 只作參考預設值
 
-**選擇**: 在 `schema.yaml` 新增頂層 `review_protocol` 欄位,artifact_phase / apply_phase
-兩個子段各自定義 review type、gate、retry 策略、focus template。每個 artifact 的
-`instruction` 末尾統一 reference 同一個 protocol。
+**選擇**: 每個 artifact 與 apply.instruction 的 review 步驟以**完整可執行文字**內聯
+在該 instruction 末尾(POSTCHECK 段)。schema.yaml 頂層**仍可選擇性**定義
+`review_protocol` 段,但只作為**參考預設值**(retry 上限、focus template 等),
+**不**作為 hard gate 的執行依據。
 
-**為何**: 避免 review 邏輯散落在 7 個 artifact instruction 中,改一處全局生效。
-OpenSpec validate 會忽略未知頂層欄位,不影響 schema 合法性。
+**為何**: OpenSpec runtime **不會解析未知頂層欄位**,既有 PRECHECK 全部都是
+直接內聯在 instruction 文字中,因為這才是模型實際讀到並執行的位置。把 hard gate
+邏輯放在 OpenSpec 會忽略的頂層欄位 + 由 instruction 「reference」,等於把可驗證
+的 gate 降級為「靠模型自己讀懂頂層欄位」的軟約定。對齊既有 schema 的 PRECHECK
+慣例,review POSTCHECK 必須**內聯**才能真正成為 hard gate。
+
+**Trade-off 接受**: review 步驟文字會在 6 個 artifact instruction + apply.instruction
+重複出現。這是**可執行性 > DRY** 的有意取捨。修改 review 策略時需要改 7 處,但
+每一處都會被 OpenSpec runtime 注入到模型上下文,不會被靜默忽略。
 
 **對立方案考慮**:
-- *方案 A*: 每個 artifact 的 instruction 內聯 review 邏輯 → 重複嚴重,改 review 策略
-  要改 7 處
+- *方案 A(原 D1)*: review 邏輯放頂層 `review_protocol`,instruction 只 reference
+  → Codex adversarial review 指出:OpenSpec validate 忽略頂層欄位 → hard gate
+  名不副實。**否決**。
 - *方案 C*: 每個 artifact 後新增獨立 review artifact 節點 → artifact 數量翻倍,
-  目錄雜亂,違反 OpenSpec artifact 模型
+  目錄雜亂,違反 OpenSpec artifact 模型。**否決**。
+
+**驗證**: Migration Plan §1 會在 schema 改完後實作驗證:
+`grep -c "POSTCHECK — Codex review gate" superpowers-bridge/schema.yaml` 必須 ≥ 7
+(6 個 artifact + 1 個 apply)。CI 加一條檢查確認 hard gate 邏輯確實內聯。
 
 ### D2: 分層 review 類型
 
@@ -106,16 +119,23 @@ final 跨 task 又回到設計層問題(整合、coherence),用對抗性。
 **為何**: 對齊 PR #970 顧慮 #1 的核心訴求 — 「不靜默降級」。使用者必須主動選擇
 放棄 Codex review,且決策被審計。
 
-### D5: review-log.md 為 append-only 審計檔
+### D5: review-log.md 為 append-only 審計檔,**每次嘗試都先寫**
 
-**選擇**: 在 `openspec/changes/<name>/review-log.md` 累積每次 review entry,結構為:
-- header: timestamp, phase, target, review type, outcome, findings count
+**選擇**: 在 `openspec/changes/<name>/review-log.md` 累積每次 review entry,
+**每次 review 嘗試一旦取得 outcome 就立即 append entry**(不等到下一階段才補寫)。
+結構為:
+- header: timestamp, phase, target, attempt(=retry_count), review type, outcome
 - findings: file:line + severity + what + recommendation
-- action taken: 修正了哪些行
-- summary(檔尾): total reviews, retries, escalations, avg findings
+- action: 該 entry 收尾時做了什麼(`proceed` / `auto-fix retry` / `escalated_to_human`
+  / `deferred_findings`)
+- summary(檔尾): total reviews, retries, escalations, avg findings — 從 entries
+  重算,不暫存中間狀態
 
 **為何**:
 - 永不覆寫 → 即使最後 ALLOW,前面 BLOCK + 修正過程仍可追溯
+- **「每次嘗試都先寫」**(Codex adversarial review finding 3 修正):原設計只在 ALLOW
+  或 STOP 時寫 log,等於 BLOCK→修正→ALLOW 中間的失敗 entry 被丟棄。最有審計價值的
+  「哪些 finding 觸發了修補、第幾次成功、修補是否引入新 finding」反而不可追溯。
 - verify.md 與 retrospective.md 都讀取此檔做事後分析
 - 結構化欄位方便日後做 review 模式統計(常見 finding 類型可提升為 schema 改進)
 
@@ -130,14 +150,34 @@ final 跨 task 又回到設計層問題(整合、coherence),用對抗性。
 - 不打斷 subagent 內部 TDD 循環(避免破壞既有 transitive 行為)
 - 在邊界處插 gate,錯誤被早期攔截,不累積到後面 task
 
-### D7: 自動修正由主 agent (Claude) 執行,非重新 dispatch subagent
+### D7: 自動修正不主動 commit;apply 階段失敗回到 subagent / TDD 循環
 
-**選擇**: BLOCK 後的修正循環,artifact 階段直接 edit `.md` 文件;apply 階段
-直接 edit source code 並產生新的 fix-up commit(不 amend)。
+**選擇**: BLOCK 後的修正循環,**全程不主動觸發 git commit**。
+
+- **artifact 階段**: 主 agent 直接 edit `.md` 文件(working tree),**不 commit**。
+  artifact 文件最終會在 apply 結束 archive 時與其他 artifact 一起進入 commit
+  (這是既有 schema 的行為,本設計不改)。
+- **apply 階段 per-task BLOCK**: **不**由主 agent 直接 edit source code 並 commit。
+  改為:
+  1. 把 review findings 寫入 review-log.md(append-only)
+  2. **重新 dispatch 該 task 的 subagent**,把 findings 作為 input,讓 subagent
+     走完整 TDD 循環(RED → GREEN → REFACTOR)+ 既有 `requesting-code-review`
+  3. subagent 完成後重跑 Codex review,計入 retry_count
+  4. retry_count 達 2 仍 BLOCK → STOP 升級給人類
 
 **為何**:
-- subagent 已完成,retry 修正屬於「補丁」性質,不需重新 dispatch
-- 不 amend 符合 git_safety 與既有 schema 規範(「Prefer new commits over --amend」)
+- Codex adversarial review 指出原 D7「主 agent 直接 commit fix-up」與 Goals 第 6 條
+  「不主動 commit」自相矛盾,且繞過 TDD + same-model code review 閉環,
+  把未經同等驗證的修補進入歷史。**這個 finding 結構性正確,必須修。**
+- 改為「重新 dispatch subagent」確保 fix-up 路徑與正常 task 路徑走**同一條**
+  驗證閉環(TDD + Superpowers code review),review trail 一致
+- 主 agent 全程只做「dispatch subagent」與「append review-log」,不主動寫 git
+
+**邊界**: 如果 subagent 重跑後本身又失敗(連 TDD 都沒走完),這是 subagent 機制
+本身的問題,直接升級人類,不算入 Codex review retry_count。
+
+**Trade-off 接受**: 重新 dispatch subagent 比主 agent 直接 edit 慢、token 成本更高
+(對應 Risks 表新增一條),但換來「fix-up 路徑與正常路徑同等驗證」的正確性。
 
 ## Risks / Trade-offs
 
@@ -145,11 +185,13 @@ final 跨 task 又回到設計層問題(整合、coherence),用對抗性。
 |------|------|----|
 | Codex CLI 不可用導致全流程卡住 | 🔴 高 | D4 雙層 PRECHECK + 顯式 opt_out |
 | 11 次以上 Codex 調用導致 token / 額度耗盡 | 🟡 中 | review-log Summary 即時記錄,使用者可中止 |
+| apply 階段 BLOCK 重新 dispatch subagent 加重 token / 時間成本 | 🟡 中 | D7 接受此 trade-off 換來「fix-up 與正常 task 同等驗證」;若成本超出可接受值,使用者可走 escalate-to-human 強制通過 |
 | 自動修正反而引入新 bug | 🟡 中 | D3 max_retries=2 上限,達不到必須升級 |
 | review 結果不穩定(同 input 多次結果不同) | 🟡 中 | 在 retrospective §6 累積證據,反覆 false BLOCK 可調 prompt |
 | 與 `superpowers:requesting-code-review` 重複 | 📌 低 | 設計上「跨模型 review」是 feature 不是 bug |
 | review 階段 Codex 自身有 bug 觸發 retry 死迴圈 | 🟡 中 | review 工具失敗(網路 / CLI 錯誤)不算 retry_count,獨立計入無限重試上限 3 次 |
 | review finding 涉及非當前 artifact 的舊文件 | 📌 低 | 只記入 review-log 為 deferred,**不**修正,避免 review scope 失控 |
+| review 步驟內聯導致 7 處重複文字維護成本 | 📌 低 | D1 接受此 trade-off;改 review 策略需改 7 處,但 CI 加 grep 檢查可確認一致性 |
 
 ## State machine
 
@@ -158,17 +200,48 @@ artifact 已生成 / task 已完成
         │
         ▼
    retry_count = 0
-   Codex review 執行
         │
         ▼
+  ┌────────────────────────────────────┐
+  │ Codex review 執行                   │
+  └────────────────┬───────────────────┘
+                   │
+                   ▼
+  ┌────────────────────────────────────┐
+  │ 先 append review-log.md entry      │ ← 不論 ALLOW/BLOCK 都先寫
+  │ (attempt, outcome, findings, ts)   │
+  └────────────────┬───────────────────┘
+                   │
+                   ▼
    解析 review 結果
-   ├── ALLOW ──→ 寫 review-log.md → 進入下一階段
+   ├── ALLOW ──→ entry.action = "proceed" → 進入下一階段
    └── BLOCK
         │
         ▼
    retry_count < 2 ?
-   ├── yes → 自動修正 + retry_count += 1 → 重新 review
-   └── no  → STOP → 寫 review-log.md → 升級給人類
+   ├── yes
+   │     │
+   │     ▼
+   │   ┌────────────────────────────────────┐
+   │   │ 修正路徑分流(D7):                   │
+   │   │ - artifact: 主 agent edit .md     │
+   │   │ - apply: 重新 dispatch subagent    │
+   │   │   走 TDD 循環                      │
+   │   └────────────────┬───────────────────┘
+   │                    │
+   │                    ▼
+   │   ┌────────────────────────────────────┐
+   │   │ 在當前 entry 末尾 append           │
+   │   │ "action taken: <修正描述>"         │
+   │   └────────────────┬───────────────────┘
+   │                    │
+   │                    ▼
+   │            retry_count += 1
+   │                    │
+   │                    └──→ 回到「Codex review 執行」
+   │
+   └── no  → STOP → entry.action = "escalated_to_human"
+                  → 升級給人類
                     ┌──────────────────────────────┐
                     │ [a] 看完整 log 自己改          │
                     │ [b] 強制通過 + 記 override 原因 │
@@ -176,36 +249,64 @@ artifact 已生成 / task 已完成
                     └──────────────────────────────┘
 ```
 
+**Append-log 不變條件**(來自 Codex adversarial review finding 3):
+
+- 每次 review 嘗試**都先 append entry**,再決定下一步動作
+- entry 至少包含 `attempt`、`timestamp`、`outcome`、`findings`、`action`
+- 不論最終 ALLOW、retry、escalate,完整失敗鏈都被保留
+- summary(檔尾)從 entries 重新計算,不依賴中間狀態的暫存值
+
 **邊界規則**:
-- review 工具本身失敗(網路 / Codex CLI 錯誤)→ 不算 retry_count,指數退避 3 次後升級
-- Codex 回傳非 ALLOW/BLOCK 開頭 → 視為 BLOCK(保守策略)
+- review 工具本身失敗(網路 / Codex CLI 錯誤)→ 不算 retry_count,先 append
+  一個 `outcome: tool_error` 的 entry,指數退避 3 次後升級
+- Codex 回傳非 ALLOW/BLOCK 開頭 → 視為 BLOCK(保守策略),append entry 時標
+  `outcome: block_inferred`
 - retry 第二次的 fix 引入新 finding → 仍計入 retry_count(避免無限迴圈)
-- finding 涉及非當前 artifact / task 的舊文件 → 不修正,僅 review-log 記錄為 deferred
+- finding 涉及非當前 artifact / task 的舊文件 → 不修正,在當前 entry 標
+  `deferred_findings`,繼續推進
+- apply 階段重新 dispatch subagent 後本身又失敗 → 不算 Codex retry_count,
+  直接升級(這是 subagent 機制問題,不是 Codex review 機制問題)
 
 ## Migration Plan
 
 **v1 (本設計)**:
 
-1. 在 `superpowers-bridge/schema.yaml` 新增頂層 `review_protocol` 段(D1)
-2. 在每個 artifact instruction 末尾追加 POSTCHECK 段,引用 review_protocol.artifact_phase
+1. 在 `superpowers-bridge/schema.yaml` 每個 artifact 的 `instruction` 末尾**完整內聯**
+   POSTCHECK — Codex review gate 段(D1)
    - 涵蓋: brainstorm、proposal、design、specs、tasks、plan(共 6 個)
    - 不涵蓋: verify、retrospective(本身即為檢查/分析)
-3. 在 `apply.instruction` 步驟 2「subagent-driven-development」之後追加:
+   - 內聯文字必須包含:Layer 1+2 PRECHECK、`/codex:adversarial-review` 呼叫、
+     ALLOW/BLOCK 解析、retry 上限 2、escalation 三選項、append review-log 規則
+2. (可選)在 `schema.yaml` 頂層新增 `review_protocol` 段作為**參考預設值**
+   (retry 上限、focus template 等)。此段**不**作為 hard gate 執行依據,
+   只是供未來文件 / 工具讀取的中央化定義。如果這段價值不大,可在實作時直接省略。
+3. 在 `apply.instruction` 步驟 2「subagent-driven-development」之後**完整內聯**:
    - 2a: 每個 coarse task 完成後 → `/codex:review`(per-task gate)
    - 2.5: 所有 task 完成後 → `/codex:adversarial-review --scope branch`(final gate)
-4. 新增 `review-log.md` 模板(`templates/review-log.md`),append-only 結構
+   - **BLOCK 修正路徑(D7)**:不主動 commit,改為重新 dispatch subagent 走 TDD 循環
+4. 新增 `review-log.md` 模板(`templates/review-log.md`),append-only 結構,
+   每次 review 嘗試先寫 entry,再決定下一動作(D5)
 5. 在 verify.md 模板「Implementation signal」段追加 5b:Codex review trail integrity
 6. 在 retrospective.md 模板 §0 Evidence 追加: Codex review stats 一行
 7. 更新 `superpowers-bridge/README.md`「六個值得記住的設計觸點」段,新增 #7
-   Codex review gate 章節
-8. 更新 CLAUDE.md「修 schema 的紅旗」段,新增第五條:不可 silent fallback
+   Codex review gate 章節(說明為何選擇內聯而非頂層引用)
+8. 更新 CLAUDE.md「修 schema 的紅旗」段,新增第五、第六條:
+   - 不可 silent fallback(缺 Codex CLI 偷偷降級)
+   - 不可把 review hard gate 邏輯只放在頂層 `review_protocol`,
+     必須內聯到 instruction
 9. 同步更新 README.zh-TW.md 與其他繁中翻譯檔
+10. **CI 驗證**: 在 `.github/workflows/validate-schemas.yml` 加一條:
+    ```bash
+    test "$(grep -c 'POSTCHECK — Codex review gate' superpowers-bridge/schema.yaml)" -ge 7
+    ```
+    確保 6 個 artifact + 1 個 apply.instruction 都內聯了 review gate,防止
+    後續修改時意外移除某處(這是 hard gate 名實相符的最後一道防線)。
 
-**Rollback strategy**: 整個 review_protocol 是 schema 增量,移除頂層
-`review_protocol` 段 + 還原各 artifact instruction 的 POSTCHECK 即可回到 v1 行為。
+**Rollback strategy**: 整個變更是 schema 增量,移除每個 instruction 的
+POSTCHECK 段 + 移除 review-log 模板 + 移除 CI 驗證即可回到 v1 行為。
 
-**Backward compatibility**: 已採用 v1 schema 的既有 cycle 不受影響(沒有
-review_protocol 欄位等同 enabled=false 的 opt out 路徑,但會被 PRECHECK 提示)。
+**Backward compatibility**: 已採用 v1 schema 的既有 cycle 不受影響(沒有 POSTCHECK
+內聯文字等同 enabled=false)。但會被 CI grep 檢查標出,提醒升級。
 
 ## Open Questions
 
