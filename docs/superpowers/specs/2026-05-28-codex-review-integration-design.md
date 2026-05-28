@@ -299,28 +299,52 @@ focus: 最終 PR diff 整體性、archive drift、文件缺口、spec sync 錯�
   ▼ BLOCK
   │
   ▼
-┌────────────────────────────────────┐
-│ Codex 歸因類型?                     │
-└────┬──────────────┬──────────────┬─┘
-     │              │              │
-  archive 同步      文件缺口         整體性 finding
-  / spec drift    (verify/retro    或無從歸因
-     │              漏寫)           │
-     ▼              │               ▼
-  ┌──────────┐      ▼            ┌──────────┐
-  │ 主 agent │  ┌──────────┐      │ 升級人類  │
-  │ 修正對應 │  │ 主 agent │      │(無從     │
-  │ artifact │  │ 補寫對應 │      │ 自動修補) │
-  │ 重跑     │  │ artifact │      └──────────┘
-  │ archive  │  │ 重跑     │
-  └──────────┘  │ archive  │
-                └──────────┘
-                 ↓
-           重跑 final PR gate
-           retry_count_final_pr += 1
-                 ↓
+┌────────────────────────────────────────────────────────┐
+│ Codex 歸因類型?                                          │
+└─┬───────────┬───────────────┬───────────────┬──────────┘
+  │           │               │               │
+ archive    文件缺口         source code      整體性
+ 同步       (verify /        finding          finding 或
+ / spec     retrospective    (D9-2 boundary   無從歸因
+ drift      漏寫)            rule;極少發生)   │
+  │           │               │               ▼
+  ▼           ▼               ▼            ┌──────────┐
+┌─────────┐ ┌─────────┐  ┌──────────────┐  │ 升級人類  │
+│ 主 agent│ │ 主 agent│  │ append       │  └──────────┘
+│ 修正對應 │ │ 補寫對應 │  │ integration- │
+│ artifact│ │ artifact│  │ fix task     │
+│ 重跑     │ │ 重跑     │  │ → fresh      │
+│ archive │ │ archive │  │ subagent     │
+└────┬────┘ └────┬────┘  │ 走 TDD       │
+     │           │       └──────┬───────┘
+     │           │              │
+     │           │              ▼
+     │           │       ┌──────────────────────┐
+     │           │       │ 重跑 D9-1            │
+     │           │       │ (integration gate)  │
+     │           │       │ retry_count_         │
+     │           │       │ integration 重置為 0 │
+     │           │       └──────┬───────────────┘
+     │           │              │ ALLOW
+     │           │              ▼
+     │           │       ┌──────────────────────┐
+     │           │       │ 重跑 verify /         │
+     │           │       │ retrospective /       │
+     │           │       │ archive              │
+     │           │       │ (這些 artifact 都會  │
+     │           │       │ 反映新 source 狀態)   │
+     │           │       └──────┬───────────────┘
+     │           │              │
+     ▼           ▼              ▼
+   ┌────────────────────────────────────┐
+   │ 重跑 final PR gate                  │
+   │ retry_count_final_pr += 1           │
+   │ (跨修復路徑共用此計數,不分流重置)   │
+   └────────┬───────────────────────────┘
+            │
+            ▼
         retry_count_final_pr < 2?
-        ├── yes → 仍 BLOCK 回到分流
+        ├── yes → 仍 BLOCK 回到 Codex 歸因分流
         └── no  → 升級人類
 ```
 
@@ -341,13 +365,22 @@ focus: 最終 PR diff 整體性、archive drift、文件缺口、spec sync 錯�
 - 即使 integration 用滿 2 次 retry 才 ALLOW,final PR gate 仍從 0 開始重新計數
 - 不互相累加,因為兩個 gate 是不同問題層級
 
+**source-code finding 分支的 retry_count 語意**(Codex round 4 finding 2 修正):
+- final PR gate 發現 source-code 問題 → 觸發完整重跑鏈:integration-fix task →
+  D9-1 → verify → retrospective → archive → 重跑 D9-2
+- 重跑 D9-1 時 `retry_count_integration` **重置為 0**(被視為對新 source 的全新
+  integration 檢查;但這次重置事件會被記在 review-log,retrospective §6 會檢視
+  「為何 D9-1 第一次沒抓到」作為 schema 改進候選)
+- 重跑 D9-2 時 `retry_count_final_pr` **保留(+= 1)**(因為仍在嘗試讓 THIS cycle
+  通過 final PR gate,連續嘗試都計入)
+
 **邊界**:
 - final PR gate BLOCK 修復涉及 artifact(verify.md / retrospective.md / 漏 archive),
   主 agent edit `.md` + 重跑 `openspec archive -y`(這是合法的 schema 操作,
   非「主動 commit」)
-- final PR gate BLOCK 修復涉及 source code → 視為 D9-1 的 integration-fix task,
-  重新 dispatch subagent 走 TDD(理論上極少發生,因為 source 已經過 D9-1;若發生
-  代表 integration gate 漏了,在 retrospective §6 提升)
+- final PR gate BLOCK 修復涉及 source code → 走上述完整重跑鏈,**絕不**讓主 agent
+  在 archive 後直接改 source(否則 verify / retrospective 會帶過期證據,違反
+  D7 的 git_safety 與 PR #970 「不主動 commit」精神)
 - final PR gate **完全不允許 deferred_findings**(同 integration gate)
 
 ## Risks / Trade-offs
@@ -507,7 +540,17 @@ deferred_findings 適用範圍(來自 Codex adversarial review round 2 finding 3
    archive 完成後:
      /codex:adversarial-review --scope branch --base main (final PR gate, D9-2)
      ALLOW → 進 finishing-a-development-branch(開 PR)
-     BLOCK → D9-2 修復路徑(archive drift / 文件缺口 / 升級)
+     BLOCK → 依 Codex 歸因分流(4 類):
+       - archive 同步 / spec drift → 主 agent 修對應 artifact + 重跑 archive
+         → 重跑 D9-2(retry_count_final_pr += 1)
+       - 文件缺口(verify / retrospective 漏寫)→ 主 agent 補寫 + 重跑 archive
+         → 重跑 D9-2(retry_count_final_pr += 1)
+       - source-code finding(極少發生)→ append integration-fix task →
+         fresh subagent 走 TDD → 重跑 D9-1(retry_count_integration 重置為 0)
+         → 重跑 verify → retrospective → archive → 重跑 D9-2
+         (retry_count_final_pr += 1,不重置)
+       - 整體性 finding 或無從歸因 → 升級人類
+     retry_count_final_pr 達 2 仍 BLOCK → 升級人類
    ```
    這段 instruction 必須完整內聯,**不**只 reference 頂層 `review_protocol`
    (D1)。Migration §10 的 CI grep 檢查包含 `apply.instruction` 在內。
@@ -542,18 +585,38 @@ deferred_findings 適用範圍(來自 Codex adversarial review round 2 finding 3
      而把 Codex per-task gate 寫成「之後追加」(這會讓 gate 形同虛設,
      見本 spec D8)
 9. 同步更新 README.zh-TW.md 與其他繁中翻譯檔
-10. **CI 驗證**: 在 `.github/workflows/validate-schemas.yml` 加兩條:
+10. **CI 驗證**(Codex round 4 finding 1 修正): 在
+    `.github/workflows/validate-schemas.yml` 加以下檢查。**不**用
+    `grep -A N` 限定範圍(範圍過窄會漏掉位於 N 行外的舊 executor 殘留),
+    改用 YAML 解析或 awk 提取整段 `apply.instruction`:
     ```bash
-    # POSTCHECK 內聯數量(6 artifact + apply per-task + apply integration + apply final-PR)
+    # 安裝 yq(若尚未安裝)
+    # 提取 apply.instruction 完整內容到變數
+    APPLY_INST=$(yq '.apply.instruction' superpowers-bridge/schema.yaml)
+
+    # ① POSTCHECK 內聯數量(6 artifact + apply per-task + integration + final-PR ≥ 9)
     test "$(grep -c 'POSTCHECK — Codex review gate' superpowers-bridge/schema.yaml)" -ge 9
 
-    # apply PRECHECK 不再依賴 subagent-driven-development
-    ! grep -A 30 '^apply:' superpowers-bridge/schema.yaml | grep -q 'superpowers:subagent-driven-development'
+    # ② apply.instruction 不可包含 subagent-driven-development(D8 已棄用)
+    if echo "$APPLY_INST" | grep -q 'superpowers:subagent-driven-development'; then
+      echo "FAIL: apply.instruction still references subagent-driven-development (see D8)"
+      exit 1
+    fi
+
+    # ③ apply.instruction 必須直接要求 4 個 skill(正向斷言)
+    for skill in test-driven-development requesting-code-review using-git-worktrees finishing-a-development-branch; do
+      if ! echo "$APPLY_INST" | grep -q "superpowers:$skill"; then
+        echo "FAIL: apply.instruction missing required skill: $skill"
+        exit 1
+      fi
+    done
     ```
-    第一條確保 6 個 artifact + 3 個 apply gate(per-task / integration / final PR)
-    都內聯了 review gate,防止後續修改時意外移除某處。
-    第二條確保 D8 的 executor 變更不會被悄悄回退到舊的 `subagent-driven-development`
-    依賴(這是 hard gate 名實相符的最後一道防線)。
+    覆蓋整個 `apply.instruction` 區塊(不論長度),確保:
+    - 9 個內聯 POSTCHECK 都在
+    - D8 的 executor 變更不會被悄悄回退到 `subagent-driven-development`
+    - 4 個必備 skill 全部直接列出(取代既有 transitive 引用)
+
+    這是 hard gate 名實相符的最後一道防線。
 
 **Rollback strategy**: 整個變更是 schema 增量,移除每個 instruction 的
 POSTCHECK 段 + 移除 review-log 模板 + 移除 CI 驗證即可回到 v1 行為。
