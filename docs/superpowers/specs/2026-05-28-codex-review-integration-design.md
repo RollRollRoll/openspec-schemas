@@ -143,60 +143,168 @@ final 跨 task 又回到設計層問題(整合、coherence),用對抗性。
 
 **選擇**: review gate 插在「當前單位完成」與「下一單位開始」之間。
 - artifact 階段: 寫完 `<artifact>.md` → review → ALLOW → 進下一個 artifact
-- apply 階段: subagent 標記 task done → review → ALLOW → 進下一個 task
+- apply 階段: **主 agent** 觀察到當前 task 的 subagent 完成 → review → ALLOW
+  → 主 agent dispatch 下一個 task 的 subagent(見 D8)
 - apply final: 所有 task done → review → ALLOW → 進 verify
 
 **為何**:
 - 不打斷 subagent 內部 TDD 循環(避免破壞既有 transitive 行為)
 - 在邊界處插 gate,錯誤被早期攔截,不累積到後面 task
 
-### D7: 自動修正不主動 commit;apply 階段失敗回到 subagent / TDD 循環
+### D7: 自動修正不主動 commit
 
 **選擇**: BLOCK 後的修正循環,**全程不主動觸發 git commit**。
 
 - **artifact 階段**: 主 agent 直接 edit `.md` 文件(working tree),**不 commit**。
   artifact 文件最終會在 apply 結束 archive 時與其他 artifact 一起進入 commit
   (這是既有 schema 的行為,本設計不改)。
-- **apply 階段 per-task BLOCK**: **不**由主 agent 直接 edit source code 並 commit。
-  改為:
-  1. 把 review findings 寫入 review-log.md(append-only)
-  2. **重新 dispatch 該 task 的 subagent**,把 findings 作為 input,讓 subagent
-     走完整 TDD 循環(RED → GREEN → REFACTOR)+ 既有 `requesting-code-review`
-  3. subagent 完成後重跑 Codex review,計入 retry_count
-  4. retry_count 達 2 仍 BLOCK → STOP 升級給人類
+- **apply 階段**: 主 agent **不**直接 edit source code 並 commit。改為重新 dispatch
+  subagent 走 TDD 循環(per-task BLOCK 見 D8;final BLOCK 見 D9)。
+  - 這是 Codex adversarial review round 1 finding 1 的修正:原 D7「主 agent 直接
+    commit fix-up」與 Goals 第 6 條「不主動 commit」自相矛盾,且繞過 TDD +
+    same-model code review 閉環。
+- **review-log.md 寫入**: 純 file edit,不觸發 git 操作。最終由 archive 步驟
+  與其他 artifact 一起 commit。
+
+### D8: apply 階段主 agent 顯式接管 task loop(取代直接交給 subagent-driven-development)
+
+**選擇**: apply 階段不再直接呼叫 `superpowers:subagent-driven-development` 執行
+**整個 plan**。改為主 agent **顯式按 coarse task 一個一個** dispatch:
+
+```
+for each coarse task in tasks.md:
+  1. 主 agent dispatch 一個新的 subagent 完成 THIS task
+     - subagent 內部走 superpowers:test-driven-development(RED-GREEN-REFACTOR)
+     - subagent 內部走 superpowers:requesting-code-review(同模型 review)
+     - subagent 完成後產生 commits,marks tasks.md `- [x]`
+  2. 主 agent run /codex:review --scope working-tree
+     focus: 該 task 的 commits + 對應 spec scenario
+  3. append review-log entry
+  4. 解析 outcome:
+     - ALLOW → 進下一個 task
+     - BLOCK → 主 agent dispatch SAME task 的新 subagent,把 Codex findings
+       作為 input,subagent 重新走 TDD 循環。retry_count += 1
+     - retry_count 達 2 仍 BLOCK → STOP 升級給人類
+after all tasks done:
+  跑 final Codex adversarial review(見 D9)
+```
 
 **為何**:
-- Codex adversarial review 指出原 D7「主 agent 直接 commit fix-up」與 Goals 第 6 條
-  「不主動 commit」自相矛盾,且繞過 TDD + same-model code review 閉環,
-  把未經同等驗證的修補進入歷史。**這個 finding 結構性正確,必須修。**
-- 改為「重新 dispatch subagent」確保 fix-up 路徑與正常 task 路徑走**同一條**
-  驗證閉環(TDD + Superpowers code review),review trail 一致
-- 主 agent 全程只做「dispatch subagent」與「append review-log」,不主動寫 git
+- Codex adversarial review round 2 finding 1 指出:`subagent-driven-development`
+  本身是執行**整個 plan** 的 task loop;若把 Codex per-task gate 寫成「追加在
+  整個 executor 之後」,等於 gate 只能在所有 task 完成後才 run,task 1 出錯時
+  task 2 早就建立在被 BLOCK 的代碼上。**per-task hard gate 名存實亡**。
+- 主 agent 顯式接管 task loop 是讓 per-task gate 真正成為 task 間閘門的唯一辦法
+  (在不修改 Superpowers skill 本身的前提下)
+- 每個 task 仍由 fresh subagent 執行,subagent 仍透過 TDD 與
+  requesting-code-review 完成內部驗證,只是 executor 從「Superpowers 跑整個 loop」
+  改為「主 agent 跑外層 + Superpowers skills 跑內層」
 
-**邊界**: 如果 subagent 重跑後本身又失敗(連 TDD 都沒走完),這是 subagent 機制
-本身的問題,直接升級人類,不算入 Codex review retry_count。
+**Trade-off 接受**:
+- 失去 `subagent-driven-development` 整體執行的「自動化便利」,主 agent 需要明確
+  按 tasks.md 拆分並逐個 dispatch
+- 主 agent 上下文需保留 task 順序與依賴關係,不能讓 token 耗盡(Risks 表新增一條)
+- 但換來「per-task hard gate 真正可執行」,值得
 
-**Trade-off 接受**: 重新 dispatch subagent 比主 agent 直接 edit 慢、token 成本更高
-(對應 Risks 表新增一條),但換來「fix-up 路徑與正常路徑同等驗證」的正確性。
+**邊界**:
+- 如果 subagent 重跑後本身又失敗(連 TDD 都沒走完)→ 不算 Codex retry_count,
+  直接升級人類(這是 subagent 機制問題,非 Codex review 問題)
+- task 之間如果有並行可能性,v1 一律序列執行(保證 gate 嚴格生效);v1.1
+  可考慮獨立 task 並行 + per-task gate 並行檢查
+
+### D9: final gate BLOCK 的修復路徑(獨立於 per-task)
+
+**選擇**: 所有 task 完成後跑 `/codex:adversarial-review --scope branch --base main`
+作為 final gate。BLOCK 路徑與 per-task 不同:
+
+```
+final review BLOCK
+  │
+  ▼
+┌────────────────────────────────────┐
+│ Codex 是否能把 findings 歸因到具體  │
+│ task / 文件範圍?                    │
+└────┬─────────────────────────┬─────┘
+     │                         │
+   yes                       no(整體性 finding)
+     │                         │
+     ▼                         ▼
+┌──────────────────────┐  ┌──────────────────────┐
+│ 把每個 finding 轉成   │  │ 直接升級人類          │
+│ integration-fix task │  │(無從歸因,不嘗試      │
+│ append 進 tasks.md    │  │ 自動修補)            │
+│ 標記 [integration-fix]│  └──────────────────────┘
+└──────┬───────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ 主 agent 為每個 integration- │
+│ fix task dispatch fresh      │
+│ subagent 走 TDD + Superpowers │
+│ review                       │
+└──────┬───────────────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ 重跑 /codex:adversarial-     │
+│ review --scope branch        │
+│ retry_count += 1             │
+└──────┬───────────────────────┘
+       │
+       ▼
+   retry_count < 2?
+   ├── yes → 仍 BLOCK 回到上面循環
+   └── no  → 升級人類
+```
+
+**為何**:
+- Codex adversarial review round 2 finding 2 指出:D7 只定義了 per-task BLOCK
+  的修復路徑(重新 dispatch **該 task** 的 subagent),但 final review 的 BLOCK
+  通常是**跨 task 整合問題**,沒有單一 task 可重派。實作者要麼卡住,要麼
+  回退到主 agent 直接改 code(繞開 D7 想保護的 TDD 閉環)。
+- 把 findings 轉成 integration-fix task 確保修復仍走 subagent + TDD +
+  Superpowers review 閉環,**不**讓主 agent 直接改 source
+- 「無從歸因 → 直接升級」這個分支,避免實作者為了套用「轉 task」而強行歸因,
+  把整體性的設計問題硬塞進 task 模板裡
+
+**邊界**:
+- integration-fix task 寫入 tasks.md 時,前綴標記 `[integration-fix from final review]`,
+  retrospective §0 可統計「v1 cycle 中有多少 integration-fix」反推 plan 顆粒度
+  問題
+- final retry_count 與 per-task retry_count **獨立計數**,不互相累加
 
 ## Risks / Trade-offs
 
 | 風險 | 嚴重度 | 緩解 |
 |------|------|----|
 | Codex CLI 不可用導致全流程卡住 | 🔴 高 | D4 雙層 PRECHECK + 顯式 opt_out |
+| 主 agent 接管 task loop 導致主 context token 耗盡(D8)| 🔴 高 | 主 agent 每完成一個 task 就壓縮上下文;只保留 tasks.md 進度與當前 task 的 review 結果;歷史 commits 用 `git log` 重讀,不存記憶體 |
 | 11 次以上 Codex 調用導致 token / 額度耗盡 | 🟡 中 | review-log Summary 即時記錄,使用者可中止 |
-| apply 階段 BLOCK 重新 dispatch subagent 加重 token / 時間成本 | 🟡 中 | D7 接受此 trade-off 換來「fix-up 與正常 task 同等驗證」;若成本超出可接受值,使用者可走 escalate-to-human 強制通過 |
+| apply 階段 BLOCK 重新 dispatch subagent 加重 token / 時間成本 | 🟡 中 | D7+D8 接受此 trade-off 換來「fix-up 與正常 task 同等驗證」;若成本超出可接受值,使用者可走 escalate-to-human 強制通過 |
+| final BLOCK 無法歸因時直接升級可能讓使用者卡住(D9)| 🟡 中 | review-log 完整記錄 finding 內容,使用者拿到完整證據可手動拆 task 或選擇 override |
 | 自動修正反而引入新 bug | 🟡 中 | D3 max_retries=2 上限,達不到必須升級 |
 | review 結果不穩定(同 input 多次結果不同) | 🟡 中 | 在 retrospective §6 累積證據,反覆 false BLOCK 可調 prompt |
 | 與 `superpowers:requesting-code-review` 重複 | 📌 低 | 設計上「跨模型 review」是 feature 不是 bug |
 | review 階段 Codex 自身有 bug 觸發 retry 死迴圈 | 🟡 中 | review 工具失敗(網路 / CLI 錯誤)不算 retry_count,獨立計入無限重試上限 3 次 |
-| review finding 涉及非當前 artifact 的舊文件 | 📌 低 | 只記入 review-log 為 deferred,**不**修正,避免 review scope 失控 |
+| review finding 涉及非當前 artifact / task 的舊文件 | 📌 低 | 只在 artifact / per-task gate 記為 deferred,**final gate 不允許 deferral** |
 | review 步驟內聯導致 7 處重複文字維護成本 | 📌 低 | D1 接受此 trade-off;改 review 策略需改 7 處,但 CI 加 grep 檢查可確認一致性 |
+| 失去 `subagent-driven-development` 的整體執行便利(D8)| 🟡 中 | 主 agent 顯式接管是 per-task hard gate 真正可執行的唯一辦法;trade-off 已知接受 |
 
 ## State machine
 
+本設計有**三類 gate**,共用同一套 review-log append 規則,但 BLOCK 修復路徑與
+deferred_findings 適用範圍**不同**:
+
+| Gate 類型 | 修復路徑 | deferred_findings 允許? |
+|----------|--------|----------------------|
+| artifact gate(D6 + D7)| 主 agent 直接 edit `.md` | ✅ 允許(舊 .md 不修) |
+| per-task gate(D8)| 重新 dispatch SAME task subagent 走 TDD | ✅ 允許(舊 source 不修) |
+| final branch gate(D9)| findings 轉 integration-fix task 重新 dispatch / 無法歸因升級 | ❌ **不允許** |
+
+### 共用流程(任何 gate 都適用)
+
 ```
-artifact 已生成 / task 已完成
+artifact 已生成 / task 已完成 / 所有 task 完成
         │
         ▼
    retry_count = 0
@@ -223,10 +331,13 @@ artifact 已生成 / task 已完成
    │     │
    │     ▼
    │   ┌────────────────────────────────────┐
-   │   │ 修正路徑分流(D7):                   │
-   │   │ - artifact: 主 agent edit .md     │
-   │   │ - apply: 重新 dispatch subagent    │
-   │   │   走 TDD 循環                      │
+   │   │ 修正路徑(依 gate 類型分流):         │
+   │   │ - artifact gate: 主 agent edit .md │
+   │   │ - per-task gate: 重 dispatch SAME  │
+   │   │   task subagent (D8)               │
+   │   │ - final gate: findings 轉           │
+   │   │   integration-fix task → 重新       │
+   │   │   dispatch / 無法歸因升級 (D9)      │
    │   └────────────────┬───────────────────┘
    │                    │
    │                    ▼
@@ -249,23 +360,34 @@ artifact 已生成 / task 已完成
                     └──────────────────────────────┘
 ```
 
-**Append-log 不變條件**(來自 Codex adversarial review finding 3):
+**Append-log 不變條件**(來自 Codex adversarial review round 1 finding 3):
 
 - 每次 review 嘗試**都先 append entry**,再決定下一步動作
-- entry 至少包含 `attempt`、`timestamp`、`outcome`、`findings`、`action`
+- entry 至少包含 `attempt`、`timestamp`、`outcome`、`findings`、`gate_type`
+  (artifact / per-task / final)、`action`
 - 不論最終 ALLOW、retry、escalate,完整失敗鏈都被保留
 - summary(檔尾)從 entries 重新計算,不依賴中間狀態的暫存值
 
 **邊界規則**:
+
+通用:
 - review 工具本身失敗(網路 / Codex CLI 錯誤)→ 不算 retry_count,先 append
   一個 `outcome: tool_error` 的 entry,指數退避 3 次後升級
 - Codex 回傳非 ALLOW/BLOCK 開頭 → 視為 BLOCK(保守策略),append entry 時標
   `outcome: block_inferred`
 - retry 第二次的 fix 引入新 finding → 仍計入 retry_count(避免無限迴圈)
-- finding 涉及非當前 artifact / task 的舊文件 → 不修正,在當前 entry 標
-  `deferred_findings`,繼續推進
-- apply 階段重新 dispatch subagent 後本身又失敗 → 不算 Codex retry_count,
-  直接升級(這是 subagent 機制問題,不是 Codex review 機制問題)
+- per-task / integration-fix 重新 dispatch subagent 後本身又失敗 → 不算 Codex
+  retry_count,直接升級
+
+deferred_findings 適用範圍(來自 Codex adversarial review round 2 finding 3):
+- **artifact gate**: finding 涉及非當前 artifact 的舊 `.md` 文件 → 不修正,
+  在當前 entry 標 `deferred_findings`,繼續推進
+- **per-task gate**: finding 涉及非當前 task 範圍的舊 source 文件 → 不修正,
+  在當前 entry 標 `deferred_findings`,繼續推進
+- **final branch gate**: ❌ **不允許 deferred_findings**。final review 的 scope
+  本來就是整個 branch,跨 task 與共享文件的問題正是 final gate 要攔的對象;
+  套用 deferral 規則等於把 hard gate 旁路。所有 material finding 必須走 D9
+  修復或升級 override,**沒有第三條路**
 
 ## Migration Plan
 
@@ -280,20 +402,37 @@ artifact 已生成 / task 已完成
 2. (可選)在 `schema.yaml` 頂層新增 `review_protocol` 段作為**參考預設值**
    (retry 上限、focus template 等)。此段**不**作為 hard gate 執行依據,
    只是供未來文件 / 工具讀取的中央化定義。如果這段價值不大,可在實作時直接省略。
-3. 在 `apply.instruction` 步驟 2「subagent-driven-development」之後**完整內聯**:
-   - 2a: 每個 coarse task 完成後 → `/codex:review`(per-task gate)
-   - 2.5: 所有 task 完成後 → `/codex:adversarial-review --scope branch`(final gate)
-   - **BLOCK 修正路徑(D7)**:不主動 commit,改為重新 dispatch subagent 走 TDD 循環
+3. **重寫 `apply.instruction`**:**主 agent 顯式接管 task loop**(D8),不再
+   直接呼叫 `superpowers:subagent-driven-development` 跑整個 plan。
+   改為內聯描述以下流程:
+   ```
+   for each coarse task in tasks.md:
+     a. 主 agent dispatch 一個 fresh subagent 完成 THIS task
+        (subagent 內部走 superpowers:test-driven-development +
+         superpowers:requesting-code-review)
+     b. /codex:review --scope working-tree (per-task gate)
+     c. append review-log entry
+     d. ALLOW → 進下一個 task / BLOCK → retry up to 2 → 升級
+   after all tasks done:
+     /codex:adversarial-review --scope branch --base main (final gate)
+     ALLOW → 進 verify
+     BLOCK → D9 修復路徑(integration-fix task / 升級)
+   ```
+   這段 instruction 必須完整內聯,**不**只 reference 頂層 `review_protocol`
+   (D1)。Migration §10 的 CI grep 檢查包含 `apply.instruction` 在內。
 4. 新增 `review-log.md` 模板(`templates/review-log.md`),append-only 結構,
    每次 review 嘗試先寫 entry,再決定下一動作(D5)
 5. 在 verify.md 模板「Implementation signal」段追加 5b:Codex review trail integrity
 6. 在 retrospective.md 模板 §0 Evidence 追加: Codex review stats 一行
 7. 更新 `superpowers-bridge/README.md`「六個值得記住的設計觸點」段,新增 #7
    Codex review gate 章節(說明為何選擇內聯而非頂層引用)
-8. 更新 CLAUDE.md「修 schema 的紅旗」段,新增第五、第六條:
+8. 更新 CLAUDE.md「修 schema 的紅旗」段,新增第五、第六、第七條:
    - 不可 silent fallback(缺 Codex CLI 偷偷降級)
    - 不可把 review hard gate 邏輯只放在頂層 `review_protocol`,
      必須內聯到 instruction
+   - 不可在 apply.instruction 直接呼叫 `subagent-driven-development` 跑整個 plan
+     而把 Codex per-task gate 寫成「之後追加」(這會讓 gate 形同虛設,
+     見本 spec D8)
 9. 同步更新 README.zh-TW.md 與其他繁中翻譯檔
 10. **CI 驗證**: 在 `.github/workflows/validate-schemas.yml` 加一條:
     ```bash
