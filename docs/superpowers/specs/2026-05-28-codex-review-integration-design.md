@@ -300,6 +300,14 @@ focus: 最終 PR diff 整體性、archive drift、文件缺口、spec sync 錯�
   │
   ▼
 ┌────────────────────────────────────────────────────────┐
+│ unarchive: 把 archived change folder 移回 active        │
+│ + 還原 archive commit 對 openspec/specs/ 的變動         │
+│ (D9-2 修復鏈的前置;不論哪類 finding 都必跑)             │
+│ unarchive 失敗(衝突 / 手動修改)→ 直接升級人類          │
+└────────┬───────────────────────────────────────────────┘
+         │
+         ▼
+┌────────────────────────────────────────────────────────┐
 │ Codex 歸因類型?                                          │
 └─┬───────────┬───────────────┬───────────────┬──────────┘
   │           │               │               │
@@ -366,22 +374,55 @@ focus: 最終 PR diff 整體性、archive drift、文件缺口、spec sync 錯�
 - 不互相累加,因為兩個 gate 是不同問題層級
 
 **source-code finding 分支的 retry_count 語意**(Codex round 4 finding 2 修正):
-- final PR gate 發現 source-code 問題 → 觸發完整重跑鏈:integration-fix task →
-  D9-1 → verify → retrospective → archive → 重跑 D9-2
+- final PR gate 發現 source-code 問題 → 觸發完整重跑鏈:**先 unarchive**(見下方)→
+  integration-fix task → D9-1 → verify → retrospective → archive → 重跑 D9-2
 - 重跑 D9-1 時 `retry_count_integration` **重置為 0**(被視為對新 source 的全新
   integration 檢查;但這次重置事件會被記在 review-log,retrospective §6 會檢視
   「為何 D9-1 第一次沒抓到」作為 schema 改進候選)
 - 重跑 D9-2 時 `retry_count_final_pr` **保留(+= 1)**(因為仍在嘗試讓 THIS cycle
   通過 final PR gate,連續嘗試都計入)
 
+**unarchive 恢復步驟**(Codex round 5 finding 1 修正):
+
+D9-2 BLOCK 發生在 `openspec archive -y` 完成之後,既有流程已把 active change folder
+從 `openspec/changes/<name>/` 移到 `openspec/changes/archive/YYYY-MM-DD-<name>/`,
+delta specs 也已 sync 進 `openspec/specs/<capability>/spec.md`。任何 D9-2 BLOCK
+修復(無論 archive drift / 文件缺口 / source-code)都必須先把 cycle 還原回
+active 狀態,否則:
+- 主 agent 找不到 active `tasks.md` 可 append integration-fix task
+- 主 agent edit archived artifact 後 `openspec archive -y` 會是 no-op
+- delta sync 留下的 spec 變動沒法回滾,verify / retrospective 帶過期證據
+
+`openspec` CLI 是否提供原生 `unarchive` 指令尚未確認(列入 Open Questions §5)。
+v1 採用**手動 unarchive 流程**:
+
+```
+1. 主 agent 將 archived change folder 移回 active:
+   mv openspec/changes/archive/YYYY-MM-DD-<name>/ openspec/changes/<name>/
+2. 主 agent 從 git 歷史**還原** archive commit 對 openspec/specs/ 的變動:
+   git diff <archive-commit>^..<archive-commit> -- openspec/specs/ | git apply -R
+3. 主 agent verify active 狀態完整:
+   - test -f openspec/changes/<name>/tasks.md
+   - test -f openspec/changes/<name>/specs/  (若有 delta)
+4. (現在 cycle 回到 active 狀態,可進行 D9-2 BLOCK 的修復鏈)
+5. 修復完成後重跑 `openspec archive -y`
+```
+
+**why 手動而非自動化**:
+- 自動化 unarchive 涉及 git history 反向操作,屬於高風險破壞性動作
+- 主 agent 在 D9-2 BLOCK 場景已有人類介入意圖(retry_count 即將達上限),
+  讓主 agent 明確跑這 5 步並 append 到 review-log,保留審計
+- v1.1 等 `openspec` CLI 提供原生 `unarchive` 後改用 CLI
+
 **邊界**:
 - final PR gate BLOCK 修復涉及 artifact(verify.md / retrospective.md / 漏 archive),
-  主 agent edit `.md` + 重跑 `openspec archive -y`(這是合法的 schema 操作,
-  非「主動 commit」)
-- final PR gate BLOCK 修復涉及 source code → 走上述完整重跑鏈,**絕不**讓主 agent
-  在 archive 後直接改 source(否則 verify / retrospective 會帶過期證據,違反
-  D7 的 git_safety 與 PR #970 「不主動 commit」精神)
+  先 unarchive → 主 agent edit `.md` + 重跑 `openspec archive -y`
+- final PR gate BLOCK 修復涉及 source code → 先 unarchive → 走 D9-1 完整重跑鏈,
+  **絕不**讓主 agent 在 archive 後直接改 source(否則 verify / retrospective 會帶
+  過期證據,違反 D7 的 git_safety 與 PR #970 「不主動 commit」精神)
 - final PR gate **完全不允許 deferred_findings**(同 integration gate)
+- 若 unarchive 步驟本身失敗(git apply -R 衝突、folder 已被人類修改)→ 不算
+  `retry_count_final_pr`,直接升級人類
 
 ## Risks / Trade-offs
 
@@ -540,7 +581,9 @@ deferred_findings 適用範圍(來自 Codex adversarial review round 2 finding 3
    archive 完成後:
      /codex:adversarial-review --scope branch --base main (final PR gate, D9-2)
      ALLOW → 進 finishing-a-development-branch(開 PR)
-     BLOCK → 依 Codex 歸因分流(4 類):
+     BLOCK → 先 unarchive(把 archived folder 移回 active + 還原
+             archive commit 對 openspec/specs/ 的變動;失敗 → 升級)
+           → 再依 Codex 歸因分流(4 類):
        - archive 同步 / spec drift → 主 agent 修對應 artifact + 重跑 archive
          → 重跑 D9-2(retry_count_final_pr += 1)
        - 文件缺口(verify / retrospective 漏寫)→ 主 agent 補寫 + 重跑 archive
@@ -585,38 +628,82 @@ deferred_findings 適用範圍(來自 Codex adversarial review round 2 finding 3
      而把 Codex per-task gate 寫成「之後追加」(這會讓 gate 形同虛設,
      見本 spec D8)
 9. 同步更新 README.zh-TW.md 與其他繁中翻譯檔
-10. **CI 驗證**(Codex round 4 finding 1 修正): 在
-    `.github/workflows/validate-schemas.yml` 加以下檢查。**不**用
-    `grep -A N` 限定範圍(範圍過窄會漏掉位於 N 行外的舊 executor 殘留),
-    改用 YAML 解析或 awk 提取整段 `apply.instruction`:
+10. **CI 驗證**(Codex round 4-5 finding 修正): 在
+    `.github/workflows/validate-schemas.yml` 加**逐 instruction 的結構化
+    斷言**(不只算總數)。原因見 D1:全局 grep 算數量無法證明 hard gate
+    真的內聯在正確位置,9 個 POSTCHECK 字串可能放在註解或非執行段落,
+    CI 仍會 pass。
+
+    驗證腳本(`scripts/validate-review-gates.sh`):
+
     ```bash
-    # 安裝 yq(若尚未安裝)
-    # 提取 apply.instruction 完整內容到變數
-    APPLY_INST=$(yq '.apply.instruction' superpowers-bridge/schema.yaml)
+    #!/usr/bin/env bash
+    set -euo pipefail
 
-    # ① POSTCHECK 內聯數量(6 artifact + apply per-task + integration + final-PR ≥ 9)
-    test "$(grep -c 'POSTCHECK — Codex review gate' superpowers-bridge/schema.yaml)" -ge 9
+    SCHEMA=superpowers-bridge/schema.yaml
+    ARTIFACTS=(brainstorm proposal design specs tasks plan)
 
-    # ② apply.instruction 不可包含 subagent-driven-development(D8 已棄用)
-    if echo "$APPLY_INST" | grep -q 'superpowers:subagent-driven-development'; then
-      echo "FAIL: apply.instruction still references subagent-driven-development (see D8)"
-      exit 1
-    fi
-
-    # ③ apply.instruction 必須直接要求 4 個 skill(正向斷言)
-    for skill in test-driven-development requesting-code-review using-git-worktrees finishing-a-development-branch; do
-      if ! echo "$APPLY_INST" | grep -q "superpowers:$skill"; then
-        echo "FAIL: apply.instruction missing required skill: $skill"
-        exit 1
-      fi
+    # ① 每個 artifact 的 instruction 都必須包含完整的 POSTCHECK 結構
+    for art in "${ARTIFACTS[@]}"; do
+      INST=$(yq ".artifacts[] | select(.id == \"$art\") | .instruction" "$SCHEMA")
+      [[ -z "$INST" || "$INST" == "null" ]] && { echo "FAIL: $art instruction missing"; exit 1; }
+      for token in \
+        "POSTCHECK — Codex review gate" \
+        "/codex:adversarial-review" \
+        "ALLOW" \
+        "BLOCK" \
+        "retry" \
+        "review-log"; do
+        echo "$INST" | grep -q "$token" || { echo "FAIL: $art instruction missing token: $token"; exit 1; }
+      done
     done
-    ```
-    覆蓋整個 `apply.instruction` 區塊(不論長度),確保:
-    - 9 個內聯 POSTCHECK 都在
-    - D8 的 executor 變更不會被悄悄回退到 `subagent-driven-development`
-    - 4 個必備 skill 全部直接列出(取代既有 transitive 引用)
 
-    這是 hard gate 名實相符的最後一道防線。
+    # ② apply.instruction 必須包含三道 gate 的 POSTCHECK + 4 個必備 skill +
+    #    D9-2 完整重跑鏈
+    APPLY=$(yq '.apply.instruction' "$SCHEMA")
+    [[ -z "$APPLY" || "$APPLY" == "null" ]] && { echo "FAIL: apply.instruction missing"; exit 1; }
+
+    # ②a 三道 gate label 都在 apply.instruction 內
+    for label in "per-task gate" "integration gate" "final PR gate"; do
+      echo "$APPLY" | grep -q "$label" || { echo "FAIL: apply.instruction missing label: $label"; exit 1; }
+    done
+
+    # ②b apply.instruction 的 POSTCHECK 內聯數至少 3(per-task / integration / final-PR)
+    POSTCHECK_COUNT=$(echo "$APPLY" | grep -c "POSTCHECK — Codex review gate")
+    [[ "$POSTCHECK_COUNT" -ge 3 ]] || { echo "FAIL: apply.instruction needs ≥3 POSTCHECK gates, found $POSTCHECK_COUNT"; exit 1; }
+
+    # ②c apply.instruction 不可包含舊 executor
+    echo "$APPLY" | grep -q "superpowers:subagent-driven-development" \
+      && { echo "FAIL: apply.instruction still references subagent-driven-development (see D8)"; exit 1; } || true
+
+    # ②d 4 個必備 skill 正向斷言
+    for skill in test-driven-development requesting-code-review using-git-worktrees finishing-a-development-branch; do
+      echo "$APPLY" | grep -q "superpowers:$skill" || { echo "FAIL: apply.instruction missing required skill: $skill"; exit 1; }
+    done
+
+    # ②e D9-2 source-code 完整重跑鏈關鍵字
+    for token in "unarchive" "integration-fix" "retry_count_integration" "retry_count_final_pr"; do
+      echo "$APPLY" | grep -q "$token" || { echo "FAIL: apply.instruction missing D9-2 token: $token"; exit 1; }
+    done
+
+    echo "PASS: all review-gate assertions"
+    ```
+
+    workflow 內呼叫:
+    ```yaml
+    - name: Validate review-gate inlining
+      run: bash scripts/validate-review-gates.sh
+    ```
+
+    這個檢查證明:
+    - 6 個 artifact instruction 各自包含完整 POSTCHECK(命令 / ALLOW-BLOCK
+      解析 / retry / review-log append)
+    - apply.instruction 包含三道 gate label、3+ POSTCHECK、4 個必備 skill、
+      D9-2 重跑鏈關鍵字
+    - 舊 executor 不殘留
+
+    這是 hard gate 名實相符的最後一道防線。**全局 grep 算總數**(以前的做法)
+    無法保證 token 真的位於對應 instruction 內,結構化斷言才能。
 
 **Rollback strategy**: 整個變更是 schema 增量,移除每個 instruction 的
 POSTCHECK 段 + 移除 review-log 模板 + 移除 CI 驗證即可回到 v1 行為。
@@ -635,3 +722,11 @@ POSTCHECK 段 + 移除 review-log 模板 + 移除 CI 驗證即可回到 v1 行�
 4. **跨 cycle 的 review pattern 累積**: 反覆出現的 false BLOCK 在 retrospective
    §6 提升,但目前沒有跨 cycle 的彙總機制。v1.1 可考慮在 repo 層加
    `docs/review-patterns.md` 累積。
+5. **OpenSpec 是否提供原生 `unarchive` 指令**: D9-2 BLOCK 修復需要把 archived
+   change folder 移回 active + 還原 delta sync。v1 採用手動 5 步流程
+   (mv + git apply -R + verify)。需向 OpenSpec 上游確認是否計劃提供
+   `openspec unarchive <name>`。若有,v1.1 改用 CLI 路徑。
+6. **D9-2 BLOCK 修復鏈是否頻繁發生**: 設計上「unarchive → 走 D9-1 → 重跑 verify
+   / retrospective / archive → 重跑 D9-2」是重型路徑,假設極少觸發。若 v1 累積
+   3+ 次 cycle 都走到這條,代表 D9-1 與 verify 機制有漏洞,v1.1 應檢視 D9-1
+   的 focus template 與 verify 完整性檢查。
