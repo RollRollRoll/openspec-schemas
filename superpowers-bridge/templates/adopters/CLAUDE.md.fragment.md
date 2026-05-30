@@ -4,7 +4,7 @@
 
 ## Workflow routing (read on session start)
 
-This repo uses [`superpowers-bridge`](https://github.com/JiangWay/openspec-schemas/tree/main/superpowers-bridge) to bridge OpenSpec and Superpowers. Integration rules (language, artifact paths, PRECHECK) follow that bridge's README; this section is the routing guidance for Claude.
+This repo uses [`superpowers-bridge`](https://github.com/RollRollRoll/openspec-schemas/tree/main/superpowers-bridge) to bridge OpenSpec and Superpowers. Integration rules (language, artifact paths, PRECHECK) follow that bridge's README; this section is the routing guidance for Claude.
 
 ### Entry routing
 
@@ -43,4 +43,4 @@ When all 5 hold → proactively suggest "ready to `/opsx:propose`?" — wait for
 - Promoting to opsx with unresolved blocking TBDs
 - Opening a change for bug fix / typo
 
-Full detail: [superpowers-bridge README §Entry & exit gates](https://github.com/JiangWay/openspec-schemas/blob/main/superpowers-bridge/README.md#entry--exit-gates).
+Full detail: [superpowers-bridge README §Entry & exit gates](https://github.com/RollRollRoll/openspec-schemas/blob/main/superpowers-bridge/README.md#entry--exit-gates).
