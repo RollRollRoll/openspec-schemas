@@ -23,10 +23,6 @@ Benefits:
 
 Each bridge directory has its own `README.md` with a copy-paste Claude Code prompt for one-shot installation, plus a manual bash alternative. See e.g. [`superpowers-bridge/README.md#install`](./superpowers-bridge/README.md#install).
 
-## Roadmap
-
-See [`docs/roadmap.md`](./docs/roadmap.md) for what's planned.
-
 ## License
 
 MIT — see [LICENSE](./LICENSE).

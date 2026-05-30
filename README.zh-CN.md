@@ -24,10 +24,6 @@
 
 每个 bridge 子目录下都有自己的 `README.md`,附**复制粘贴到 Claude Code 一键安装**的 prompt,以及手动 bash 替代方案。例如 [`superpowers-bridge/README.md#install`](./superpowers-bridge/README.md#install)。
 
-## Roadmap
-
-未来规划见 [`docs/roadmap.md`](./docs/roadmap.md)。
-
 ## License
 
 MIT —— 详见 [LICENSE](./LICENSE)。

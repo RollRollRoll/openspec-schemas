@@ -19,11 +19,6 @@ openspec-schemas/                     ← 本 repo
 ├── .github/workflows/
 │   ├── validate-schemas.yml          ← CI 对每个 bridge 跑 openspec schema validate
 │   └── version-check.yml             ← 每周校验 upstream OpenSpec / Superpowers,落后就开 issue
-├── docs/
-│   ├── roadmap.md / .zh-CN.md        ← 公开 roadmap
-│   └── superpowers/
-│       ├── specs/                    ← 设计 spec(brainstorming 产出)
-│       └── plans/                    ← 实现 plan(writing-plans 产出)
 └── superpowers-bridge/                ← 第一个 bridge,自包式 schema bundle
     ├── README.md / .zh-CN.md         ← 完整 bridge 文档(含 install + integration runbook)
     ├── schema.yaml                   ← OpenSpec 读的 schema 定义
@@ -54,7 +49,6 @@ openspec-schemas/                     ← 本 repo
 |---------|------|
 | 入口 `README.md` | 英文 canonical + `README.zh-CN.md` 翻译 + 顶部切换链接 |
 | `CLAUDE.md`(这份) | 简中(给维护者 + Claude;国际读者从 README 入口进来) |
-| `docs/roadmap.md` | 英文 canonical + `.zh-CN.md` 翻译 + 切换链接 |
 | `superpowers-bridge/README.md` | 英文 canonical + `.zh-CN.md` 翻译 + 切换链接 |
 | `schema.yaml`、`templates/*.md` | 英文(机器读 + 国际读者) |
 | Commit message | 英文(国际惯例) |
@@ -96,8 +90,6 @@ PR #970 review 提出三个顾虑,本 schema 在 v1 已具体应对。Claude 在
 
 ## 相关链接
 
-- 设计 spec:[`docs/superpowers/specs/2026-05-02-openspec-schemas-monorepo-design.md`](./docs/superpowers/specs/2026-05-02-openspec-schemas-monorepo-design.md)
-- 实现 plan:[`docs/superpowers/plans/2026-05-02-phase-1-implementation.md`](./docs/superpowers/plans/2026-05-02-phase-1-implementation.md)
 - PR #970 review:<https://github.com/Fission-AI/OpenSpec/pull/970>
 - 既有 spec-kit superpowers bridges 参考:
   - [RbBtSn0w/spec-kit-extensions/superpowers-bridge](https://github.com/RbBtSn0w/spec-kit-extensions/tree/main/superpowers-bridge)
