@@ -65,7 +65,9 @@ jobs:
           openspec schema validate superpowers-bridge
 
       - name: Ensure drift label exists
-        if: steps.openspec.outputs.version != steps.pinned.outputs.openspec || steps.superpowers.outputs.tag != steps.pinned.outputs.superpowers || steps.validate.outcome == 'failure'
+        # Always run so the label exists from day 1, even before the first drift fires.
+        # The Upstream Drift badge in README queries for issues with this label and would
+        # otherwise show an error / undefined state when the label doesn't yet exist.
         uses: actions/github-script@v9
         with:
           script: |

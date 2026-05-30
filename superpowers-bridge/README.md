@@ -2,6 +2,11 @@
 
 [English](./README.md) · [简体中文](./README.zh-CN.md)
 
+[![Schema Structure](https://github.com/JiangWay/openspec-schemas/actions/workflows/validate-schemas.yml/badge.svg?branch=main)](https://github.com/JiangWay/openspec-schemas/actions/workflows/validate-schemas.yml)
+[![Upstream Drift](https://img.shields.io/github/issues-search/JiangWay/openspec-schemas?query=is%3Aopen%20label%3Aupstream-version-check&label=Upstream%20Drift&color=yellow)](https://github.com/JiangWay/openspec-schemas/issues?q=is%3Aopen+label%3Aupstream-version-check)
+[![OpenSpec baseline](https://img.shields.io/badge/OpenSpec_baseline-1.3.1-0277bd)](#compatibility)
+[![Superpowers baseline](https://img.shields.io/badge/Superpowers_baseline-v5.1.0-0277bd)](#compatibility)
+
 > Bridges [OpenSpec](https://github.com/Fission-AI/OpenSpec)'s artifact governance (the **what**) with [obra/superpowers](https://github.com/obra/superpowers) execution skills (the **how**) into a single workflow. Adds an evidence-first `retrospective` artifact filling a gap Superpowers does not natively cover.
 >
 > The integration lives entirely at the prompt layer — no Superpowers source modified, no OpenSpec CLI changes. Schema version: v1.
@@ -193,10 +198,9 @@ If any condition is missing, keep brainstorming. When all five hold:
 ### Artifact DAG
 
 ```text
-brainstorm ──→ proposal ──→ specs ──→ tasks ──→ plan ──→ [apply] ──→ verify ──→ retrospective
-                  │                     ↑
-                  └──→ design ──────────┘
-                       (optional)
+brainstorm ──┬──→ proposal ──→ specs ──┐
+             │                         ├──→ tasks ──→ plan ──→ [apply] ──→ verify ──→ retrospective
+             └──→ design ──────────────┘
 ```
 
 Differences from `spec-driven`:
@@ -222,17 +226,17 @@ flowchart TD
         direction TB
         BS["<b>brainstorm.md</b><br/><i>superpowers:brainstorming</i>"]
         PROP["<b>proposal.md</b>"]
-        DES["<b>design.md</b><br/><i>(optional, off critical path)</i>"]
+        DES["<b>design.md</b><br/><i>(required, structured decisions)</i>"]
         SP["<b>specs/**/*.md</b>"]
         TK["<b>tasks.md</b>"]
         PL["<b>plan.md</b><br/><i>superpowers:writing-plans</i>"]
 
         BS --> PROP
-        BS -. optional .-> DES
+        BS --> DES
         PROP --> SP
         SP --> TK
+        DES --> TK
         TK --> PL
-        DES -. ref .-> TK
         DES -. ref .-> PL
     end
 
@@ -255,12 +259,10 @@ flowchart TD
     PL ==>|apply.requires: plan| A0
 
     classDef artifact fill:#e1f5ff,stroke:#0277bd,color:#000
-    classDef optional fill:#fff3e0,stroke:#e65100,stroke-dasharray:5,color:#000
     classDef step fill:#f3e5f5,stroke:#6a1b9a,color:#000
     classDef capstone fill:#e8f5e9,stroke:#2e7d32,color:#000
 
-    class BS,PROP,SP,TK,PL artifact
-    class DES optional
+    class BS,PROP,DES,SP,TK,PL artifact
     class A0,A1,A2,A3,A4,A5 step
     class A6 capstone
 ```
@@ -269,8 +271,9 @@ ASCII fallback (CLI-readable):
 
 ```text
 PLANNING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  brainstorm.md ──┬─→ proposal.md ──→ specs/**/*.md ──→ tasks.md ──→ plan.md
-                  └─→ design.md (optional, reference for tasks/plan)
+  brainstorm.md ──┬─→ proposal.md ──→ specs/**/*.md ──┐
+                  │                                   ├─→ tasks.md ──→ plan.md
+                  └─→ design.md (required) ───────────┘
                                                                        │
                           apply.requires: [plan], apply.tracks: tasks  ▼
 APPLY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -310,7 +313,7 @@ Plus one OpenSpec built-in: `openspec-verify-change` (apply step 3, produces `ve
 
 Superpowers skills have default output paths (e.g., brainstorming writes to `docs/superpowers/specs/`). This schema's artifact instructions **override** that behavior by injecting context that redirects output into the change directory:
 
-- brainstorming → `openspec/changes/<name>/brainstorm.md` (+ optional `design.md`)
+- brainstorming → `openspec/changes/<name>/brainstorm.md`
 - writing-plans → `openspec/changes/<name>/plan.md`
 
 Implemented purely via context injection at invocation time, not by modifying skill source.
@@ -333,7 +336,7 @@ Implemented purely via context injection at invocation time, not by modifying sk
 /opsx:new my-feature --schema superpowers-bridge
 /opsx:continue         # → brainstorm (interactive dialogue)
 /opsx:continue         # → proposal
-/opsx:continue         # → design (optional, only when explaining technical decisions)
+/opsx:continue         # → design (reorganize brainstorm into structured decisions)
 /opsx:continue         # → specs
 /opsx:continue         # → tasks
 /opsx:continue         # → plan
@@ -460,22 +463,44 @@ The LLM does not need to interpret timing prose — it runs commands and reads r
 
 ---
 
+## Versioning
+
+This bundle carries **two version identifiers** that should not be confused:
+
+| Identifier | Where | Meaning | Example |
+|---|---|---|---|
+| Schema major | `schema.yaml: version: 1` | Contract of the schema graph (artifacts, `requires:` edges, PRECHECK shape). Breaking changes bump this. | `1` |
+| Bundle release | `VERSION` file + git tag | SemVer release of this bundle, scoped to a schema major. | `1.0.0` (tagged `v1.0.0`) |
+
+A bundle release `1.x.y` is a published cut of schema major `v1`. A future schema major `v2` will restart bundle releases at `2.0.0`. Adopters who pin to `v1.x.y` are guaranteed schema-graph compatibility within the v1 major.
+
+> The compatibility matrix below uses `v1` (schema major) as the row key, because compatibility with OpenSpec / Superpowers is governed by the schema contract, not by patch-level edits inside this bundle.
+
 ## Compatibility
 
-Tested against these upstream versions. CI re-verifies the latest weekly via the [version-check workflow](../.github/workflows/version-check.yml).
+Baseline versions this schema was authored against. This is a **historical snapshot, not an end-to-end compatibility guarantee** — CI cannot run the full prompt-layer workflow in headless mode, so behavioral compatibility relies on human review when drift fires.
 
-| superpowers-bridge | OpenSpec CLI | Superpowers plugin | Last verified |
+Current bundle release: **`1.0.0`** (git tag `v1.0.0`; see [VERSION](./VERSION)).
+
+| superpowers-bridge | OpenSpec CLI | Superpowers plugin | Baseline as of |
 |---|---|---|---|
-| v1 | `1.3.1` | `v5.1.0` | 2026-05-06 |
+| v1 | `1.3.1` | `v5.1.0` | 2026-05-11 |
+
+### How this is checked
+
+The contract is three layers — **baseline declaration + automated drift detection + human review** — not automated compatibility enforcement.
+
+| Layer | Mechanism | Catches | When it fires |
+|---|---|---|---|
+| Structural | [`validate-schemas.yml`](../.github/workflows/validate-schemas.yml) on every push/PR; [`version-check.yml`](../.github/workflows/version-check.yml) weekly against latest OpenSpec | Schema-graph breaks (field renames, removed `requires:` edges, PRECHECK syntax changes) | CI run fails red |
+| Drift notification | [`version-check.yml`](../.github/workflows/version-check.yml) weekly, compares baseline above against latest npm / GitHub release | Pinned ≠ latest upstream | Opens / updates a [labelled drift issue](https://github.com/JiangWay/openspec-schemas/issues?q=is%3Aopen+label%3Aupstream-version-check) for human review (workflow stays green — drift is normal, not a failure) |
+| End-to-end workflow | **Not automated** | Behavioral changes inside Superpowers skills (renames, prose rewrites altering PRECHECK semantics, transitive-dependency changes); subtle OpenSpec engine semantic shifts | A human reads upstream release notes when the drift issue fires |
+
+The "Baseline as of" date is bumped when a maintainer manually re-runs a full cycle against the listed versions and confirms nothing degraded. Until then, the date marks human attestation, not an automated test pass.
 
 ### Known breaking changes
 
 None to date. Future schema-graph structural changes (artifact add/remove, `requires:` edge changes, PRECHECK changes) will be listed here with a migration note.
-
-### What is and isn't auto-detected
-
-- ✅ **Auto-detected** — structural breaks where `openspec schema validate superpowers-bridge` fails against a new OpenSpec CLI release. The [validate-schemas workflow](../.github/workflows/validate-schemas.yml) runs on every push/PR; the [version-check workflow](../.github/workflows/version-check.yml) runs weekly against the latest published versions and opens / updates an issue if the matrix above falls behind or validation breaks.
-- ⚠️ **Not auto-detected** — behavioral changes inside Superpowers skills (skill renames, prose rewrites that alter PRECHECK semantics, transitive-dependency changes). When the version-check workflow sees a new upstream release, the issue prompts a human to read the release notes.
 
 For adopters: pin to versions ≥ those listed above. To inspect your own project's runtime state, run `openspec list` + `openspec schemas` + `claude plugin list`.
 

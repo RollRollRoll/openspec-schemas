@@ -13,7 +13,9 @@ description: >
   Each artifact / apply step verifies its required skills before
   invoking and surfaces a clear error if any are missing.
   brainstorm → proposal → specs → tasks → plan → verify → retrospective.
-  design is optional (produced from brainstorm but not required by tasks).
+  design is required (reorganizes raw brainstorm output into structured
+  Context / Goals / Decisions / Risks / Migration; referenced by tasks
+  and plan for implementation guidance).
   Apply phase uses git worktrees + subagent-driven-development
   (brings TDD and code-review transitively).
 
@@ -34,12 +36,17 @@ artifacts:
 
       IMPORTANT output redirection:
       - Do NOT write to `docs/superpowers/specs/`. Instead, write the
-        brainstorming design output directly to this change's `brainstorm.md`.
-      - If brainstorming produces a design document, also write it to
-        this change's `design.md` (this will pre-fill the design artifact).
-
-      After brainstorming completes, summarize the agreed design in
-      brainstorm.md using the template structure.
+        brainstorming output directly to this change's `brainstorm.md`.
+      - brainstorm.md is a RAW CAPTURE — write the brainstorming
+        skill's full output as-is, without forcing any template
+        structure. The skill's natural output is typically a decision
+        log (background → decision chain Q1-Qn → design trade-offs),
+        but the format varies by conversation. Preserve the skill's
+        natural organization.
+      - Do NOT pre-fill design.md during this step. design.md is a
+        separate artifact that reorganizes brainstorm.md content into
+        structured sections (Context, Goals, Decisions, Risks,
+        Migration). That transformation happens in the design step.
 
       The brainstorming skill will:
       1. Explore project context
@@ -81,17 +88,22 @@ artifacts:
     instruction: |
       Create the design document explaining HOW to implement the change.
 
-      Check if brainstorming already produced a design.md file.
-      If design.md already exists with content from brainstorming,
-      review and refine it rather than starting from scratch.
+      Read brainstorm.md as input. brainstorm.md is a raw capture of
+      the brainstorming skill's output (typically a decision log with
+      Q1-Qn decisions, trade-offs, and context). Your job is to
+      REORGANIZE that content into the structured sections below.
 
-      If design.md is empty or doesn't exist, create it from
-      the brainstorm.md output.
+      This is a transformation, not a copy. Extract and restructure:
+      - Decisions (Q1-Qn from brainstorm) → design.md §Decisions
+      - Background/context → design.md §Context
+      - Trade-offs → design.md §Risks / Trade-offs
+      - Add Goals/Non-Goals and Migration Plan (may require
+        inference from brainstorm.md content)
 
       Sections:
       - **Context**: Background, current state, constraints, stakeholders
       - **Goals / Non-Goals**: What this design achieves and explicitly excludes
-      - **Decisions**: Key technical choices with rationale (why X over Y?). Include alternatives considered.
+      - **Decisions**: Key technical choices with rationale (why X over Y?). Include alternatives considered per decision.
       - **Risks / Trade-offs**: Known limitations, things that could go wrong. Format: [Risk] → Mitigation
       - **Migration Plan**: Steps to deploy, rollback strategy (if applicable)
       - **Open Questions**: Outstanding decisions or unknowns to resolve
@@ -145,12 +157,11 @@ artifacts:
       - Tasks should be small enough to complete in one session
       - Order tasks by dependency (what must be done first?)
 
-      Reference specs for what needs to be built. If design.md exists,
-      reference it for how to build it — but design is optional (see
-      openspec-conventions: design.md is only for changes that need to
-      explain non-trivial technical decisions).
+      Reference specs for what needs to be built and design.md for
+      how to build it (architecture decisions, trade-offs, migration).
     requires:
       - specs
+      - design
 
   - id: plan
     generates: plan.md

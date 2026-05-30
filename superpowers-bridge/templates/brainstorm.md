@@ -1,39 +1,12 @@
-## Design Summary
-
-<!-- Validated design from brainstorming session -->
-
-## Alternatives Considered
-
 <!--
-按 openspec/config.yaml 的 brainstorm rule:须涵盖 2-3 个替代方案并说明取舍。
+Raw capture of superpowers:brainstorming output.
 
-### 方案 A:<名称>
-- **做法**:<一段描述>
-- **优点**:<列点>
-- **缺点**:<列点>
-- **为何未采用**:<与 Agreed Approach 的差距>
+本文件原样捕捉 brainstorming skill 的产出,不强制结构。
+Skill 的自然产出通常是 decision log 格式(背景 → 决议链 Q1-Qn → 设计取舍),
+但依对话内容可能有不同组织方式。
 
-### 方案 B:<名称>
-- **做法**:
-- **优点**:
-- **缺点**:
-- **为何未采用**:
+design.md 从本文件萃取并重新整理为结构化设计文件。
 
-### 方案 C:<名称>(可选)
-- **做法**:
-- **优点**:
-- **缺点**:
-- **为何未采用**:
+不要将本文件的内容复制到 design.md —— design.md 是独立的重组产物,
+两者互补但不重叠。
 -->
-
-## Agreed Approach
-
-<!-- The chosen approach and rationale —— 引用上方其中一个方案并说明为何胜出 -->
-
-## Key Decisions
-
-<!-- Decisions made during brainstorming -->
-
-## Open Questions
-
-<!-- Any remaining questions to resolve -->
