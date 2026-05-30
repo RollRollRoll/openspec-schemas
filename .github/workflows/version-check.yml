@@ -129,7 +129,7 @@ jobs:
               '',
               '- [ ] Review Superpowers release notes for behavioral changes (skill renames, PRECHECK semantics, transitive deps): https://github.com/obra/superpowers/releases',
               '- [ ] Review OpenSpec changelog: https://github.com/Fission-AI/OpenSpec/releases',
-              '- [ ] If safe, bump the Compatibility table in `superpowers-bridge/README.md` and `superpowers-bridge/README.zh-TW.md` (set `Last verified` to today).',
+              '- [ ] If safe, bump the Compatibility table in `superpowers-bridge/README.md` and `superpowers-bridge/README.zh-CN.md` (set `Last verified` to today).',
               '- [ ] If breaking, add an entry under "Known breaking changes" in both READMEs.',
               '',
               `_Workflow run: ${runUrl}_`,

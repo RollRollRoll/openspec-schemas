@@ -1,6 +1,6 @@
 # superpowers-bridge Schema
 
-[English](./README.md) · [繁體中文](./README.zh-TW.md)
+[English](./README.md) · [简体中文](./README.zh-CN.md)
 
 > Bridges [OpenSpec](https://github.com/Fission-AI/OpenSpec)'s artifact governance (the **what**) with [obra/superpowers](https://github.com/obra/superpowers) execution skills (the **how**) into a single workflow. Adds an evidence-first `retrospective` artifact filling a gap Superpowers does not natively cover.
 >
@@ -22,7 +22,7 @@ Install the superpowers-bridge schema for OpenSpec into this project:
 3. Copy the `superpowers-bridge/` subdirectory to `openspec/schemas/superpowers-bridge/`.
 4. Run `openspec schema validate superpowers-bridge` to verify.
 5. Run `openspec schemas` and confirm `superpowers-bridge` is listed.
-6. If a CLAUDE.md exists at the project root, ask me whether to insert the workflow-routing fragment from `openspec/schemas/superpowers-bridge/templates/adopters/CLAUDE.md.fragment.<locale>.md` (auto-detect locale from existing CLAUDE.md content; default zh-TW for Traditional Chinese, no suffix for English). If I say yes, append the fragment as a new section. If no CLAUDE.md exists, skip.
+6. If a CLAUDE.md exists at the project root, ask me whether to insert the workflow-routing fragment from `openspec/schemas/superpowers-bridge/templates/adopters/CLAUDE.md.fragment.<locale>.md` (auto-detect locale from existing CLAUDE.md content; default zh-CN for Simplified Chinese, no suffix for English). If I say yes, append the fragment as a new section. If no CLAUDE.md exists, skip.
 7. Clean up the temp directory.
 8. Verify Superpowers plugin is installed by running `claude plugin list`.
    If not listed, run `claude plugin install superpowers@claude-plugins-official`.
@@ -37,7 +37,7 @@ cp -R /tmp/oss/superpowers-bridge ~/your-project/openspec/schemas/superpowers-br
 
 # Optional: insert workflow-routing fragment into CLAUDE.md
 # cat /tmp/oss/superpowers-bridge/templates/adopters/CLAUDE.md.fragment.md       # English
-# cat /tmp/oss/superpowers-bridge/templates/adopters/CLAUDE.md.fragment.zh-TW.md # zh-TW
+# cat /tmp/oss/superpowers-bridge/templates/adopters/CLAUDE.md.fragment.zh-CN.md # zh-CN
 
 rm -rf /tmp/oss
 cd ~/your-project
@@ -72,7 +72,7 @@ Upgrade the superpowers-bridge schema in this project:
 8. Show me the final state.
 ```
 
-> `<locale>` defaults to `zh-TW` if your CLAUDE.md is in Traditional Chinese, or no suffix (English). Claude detects from existing CLAUDE.md content.
+> `<locale>` defaults to `zh-CN` if your CLAUDE.md is in Simplified Chinese, or no suffix (English). Claude detects from existing CLAUDE.md content.
 
 ### Upgrade Method 2: Manual bash
 
@@ -512,7 +512,7 @@ If a Superpowers skill is unavailable:
 
 - [schema.yaml](./schema.yaml) — machine-readable schema definition
 - [templates/](./templates/) — markdown templates per artifact
-- [README.zh-TW.md](./README.zh-TW.md) — 繁體中文版
+- [README.zh-CN.md](./README.zh-CN.md) — 简体中文版
 - [obra/superpowers](https://github.com/obra/superpowers) — Superpowers skill source
 - [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) — OpenSpec
 - [OpenSpec PR #970](https://github.com/Fission-AI/OpenSpec/pull/970) — original review thread that drove this design
